@@ -1,1 +1,576 @@
-index.html
+
+<!doctype html>
+<html lang="pt-br">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Desafio BillyBabe Puzzle — Undo, Snap, Confetti, Keyboard</title>
+  <style>
+    :root {
+      --primary: #bb965d;
+      --bg: #0f0f0f;
+      --gap: 4px;
+      --cols: 5;
+      --rows: 6;
+      --piece-w: 60px;
+      --piece-h: 80px;
+      --board-width: calc(var(--cols) * (var(--piece-w)) + (var(--cols) - 1) * var(--gap));
+    }
+
+    @media (max-width: 480px) {
+      :root {
+        --piece-w: calc((100vw - 40px - (var(--cols) - 1) * var(--gap)) / var(--cols));
+        --piece-h: calc(var(--piece-w) * 1.3333);
+      }
+    }
+
+    body {
+      font-family: 'Segoe UI', sans-serif;
+      background: var(--bg);
+      color: white;
+      text-align: center;
+      margin: 0;
+      padding: 20px;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+    }
+
+    .header { margin-bottom: 12px; display:flex; align-items:center; justify-content:center; gap:16px; flex-wrap:wrap; }
+    h1 { margin:0; font-size:1.05rem; }
+    .status { display:flex; gap:12px; align-items:center; font-weight:bold; color:var(--primary); }
+    #timer { font-size: 1.1rem; color: var(--primary); text-shadow: 0 0 6px rgba(187,150,93,0.3); }
+    #moves { font-size: 0.95rem; color: #eee; }
+    #best { font-size: 0.85rem; color: #ccc; }
+
+    #puzzle-board {
+      display: grid;
+      grid-template-columns: repeat(var(--cols), var(--piece-w));
+      grid-auto-rows: var(--piece-h);
+      gap: var(--gap);
+      margin: 12px auto;
+      width: var(--board-width);
+      max-width: calc(100vw - 40px);
+      border: 5px solid #222;
+      background: #222;
+      box-shadow: 0 10px 50px rgba(0,0,0,0.8);
+      touch-action: none;
+      position: relative;
+    }
+
+    .piece {
+      width: var(--piece-w);
+      height: var(--piece-h);
+      background-image: url('https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcR07n9XyO5U0O3qYyXz7v-V77D8O0A-N_YmNw&s');
+      background-size: calc(var(--cols) * var(--piece-w)) calc(var(--rows) * var(--piece-h));
+      cursor: grab;
+      border: 1px solid rgba(255,255,255,0.05);
+      transition: box-shadow 180ms ease, transform 320ms ease;
+      display: block;
+      user-select: none;
+      touch-action: none;
+      position: relative;
+      box-sizing: border-box;
+    }
+
+    .piece:active { cursor: grabbing; }
+    .piece:focus { outline: none; box-shadow: 0 0 8px rgba(187,150,93,0.8); }
+
+    .selected { outline: 3px solid var(--primary); transform: scale(1.04); z-index: 20; box-shadow: 0 0 15px var(--primary); }
+
+    .locked {
+      box-shadow: 0 0 6px rgba(46,204,113,0.25);
+      border-color: rgba(46,204,113,0.25);
+      cursor: default;
+      opacity: 0.95;
+    }
+
+    .dragging {
+      position: fixed;
+      z-index: 9999;
+      pointer-events: none;
+      transform: translate(-50%, -50%) scale(1.05);
+      box-shadow: 0 12px 30px rgba(0,0,0,0.6);
+      opacity: 0.98;
+    }
+
+    .controls { margin-top: 12px; display:flex; gap:10px; justify-content:center; flex-wrap:wrap; }
+    button {
+      background: transparent; border: 2px solid var(--primary); color: var(--primary);
+      padding: 8px 14px; font-size: 0.95rem; cursor: pointer; border-radius: 50px;
+      transition: 0.18s; font-weight: 700;
+    }
+    button:hover { background: var(--primary); color: black; }
+    button:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    #win-msg { display: none; margin-top: 10px; color: #2ecc71; font-weight: bold; }
+
+    .highlight-target { outline: 3px dashed rgba(187,150,93,0.7); }
+
+    /* confetti */
+    .confetti-piece {
+      position: fixed;
+      width: 10px;
+      height: 16px;
+      opacity: 0.95;
+      will-change: transform, opacity;
+      pointer-events: none;
+      transform-origin: center;
+      animation: confetti-fall 1400ms linear forwards;
+    }
+    @keyframes confetti-fall {
+      0% { transform: translateY(-10vh) rotate(0deg); opacity:1; }
+      80% { opacity:1; }
+      100% { transform: translateY(110vh) rotate(720deg); opacity:0; }
+    }
+
+  </style>
+</head>
+<body>
+  <div class="header" role="banner">
+    <h1>🧩 BillyBabe Puzzle</h1>
+    <div class="status" aria-live="polite">
+      <div id="timer">00:00</div>
+      <div id="moves">Movimentos: 0</div>
+      <div id="best">Melhor: —</div>
+    </div>
+  </div>
+
+  <div id="puzzle-board" aria-label="Tabuleiro do quebra-cabeça" role="grid"></div>
+
+  <div id="win-msg" role="status">✨ PARABÉNS! Você montou o BillyBabe! ✨</div>
+
+  <div class="controls">
+    <button id="restart-btn">🔄 Tentar Novamente</button>
+    <button id="shuffle-btn">🔀 Embaralhar</button>
+    <button id="undo-btn" disabled>↶ Desfazer</button>
+  </div>
+
+  <script>
+    (function () {
+      const COLS = 5;
+      const ROWS = 6;
+      const TOTAL = COLS * ROWS;
+      const board = document.getElementById('puzzle-board');
+      const timerDisplay = document.getElementById('timer');
+      const movesDisplay = document.getElementById('moves');
+      const bestDisplay = document.getElementById('best');
+      const winMsg = document.getElementById('win-msg');
+      const restartBtn = document.getElementById('restart-btn');
+      const shuffleBtn = document.getElementById('shuffle-btn');
+      const undoBtn = document.getElementById('undo-btn');
+
+      let pieces = [];
+      let selected = null;
+      let draggingEl = null;
+      let pointerIdForDrag = null;
+      let snapTarget = null;
+      let moves = 0;
+      let seconds = 0;
+      let timerInterval = null;
+      const LOCAL_KEY = 'billybabe_best_seconds_v1';
+      const undoStack = [];
+
+      function formatTime(sec) {
+        const m = Math.floor(sec / 60).toString().padStart(2, '0');
+        const s = (sec % 60).toString().padStart(2, '0');
+        return ${m}:${s};
+      }
+
+      function loadBest() {
+        const v = localStorage.getItem(LOCAL_KEY);
+        if (v !== null) bestDisplay.innerText = 'Melhor: ' + formatTime(parseInt(v, 10));
+        else bestDisplay.innerText = 'Melhor: —';
+      }
+      function saveBestIfBetter(sec) {
+        const cur = localStorage.getItem(LOCAL_KEY);
+        if (cur === null || sec < parseInt(cur, 10)) {
+          localStorage.setItem(LOCAL_KEY, String(sec));
+          loadBest();
+        }
+      }
+
+      function startTimer() {
+        stopTimer();
+        seconds = 0;
+        timerDisplay.innerText = formatTime(seconds);
+        timerInterval = setInterval(() => { seconds++; timerDisplay.innerText = formatTime(seconds); }, 1000);
+      }
+      function stopTimer() { if (timerInterval) { clearInterval(timerInterval); timerInterval = null; } }
+
+      function createPieces() {
+        pieces = [];
+        const pxW = parseInt(getComputedStyle(document.documentElement).getPropertyValue('--piece-w')) || 60;
+        const pxH = parseInt(getComputedStyle(document.documentElement).getPropertyValue('--piece-h')) || 80;
+        for (let i = 0; i < TOTAL; i++) {
+          const p = document.createElement('div');
+          p.className = 'piece';
+          p.setAttribute('tabindex', '0');
+          const x = (i % COLS);
+          const y = Math.floor(i / COLS);
+          const bp = -${x * pxW}px -${y * pxH}px;
+          p.style.backgroundPosition = bp;
+          p.dataset.correctIndex = String(i);
+          p.dataset.pieceId = 'p' + i + '-' + Math.random().toString(36).slice(2,7);
+          p.addEventListener('click', onPieceClick);
+          p.addEventListener('keydown', onPieceKeyDown);
+          p.addEventListener('pointerdown', onPiecePointerDown);
+          pieces.push(p);
+        }
+      }
+
+      function shuffleArray(arr) {
+        for (let i = arr.length - 1; i > 0; i--) {
+          const j = Math.floor(Math.random() * (i + 1));
+          [arr[i], arr[j]] = [arr[j], arr[i]];
+        }
+      }
+
+      function renderBoard(arr) {
+        board.innerHTML = '';
+        arr.forEach(el => board.appendChild(el));
+      }
+
+      function updateMoves() { movesDisplay.innerText = 'Movimentos: ' + moves; }
+
+      // FLIP swap with option whether to record as a user move
+      function swapElementsWithAnimationByElements(a, b, {recordMove = true, pushUndo = true} = {}) {
+        if (!a || !b || a === b) return;
+        // allow swap even if locked (undo may need)
+        const rectA = a.getBoundingClientRect();
+        const rectB = b.getBoundingClientRect();
+        const dxA = rectA.left - rectB.left;
+        const dyA = rectA.top - rectB.top;
+        const dxB = -dxA;
+        const dyB = -dyA;
+
+        a.style.transition = 'none';
+        b.style.transition = 'none';
+        a.style.transform = translate(${dxA}px, ${dyA}px);
+        b.style.transform = translate(${dxB}px, ${dyB}px);
+        a.getBoundingClientRect();
+
+        // record pieceIds for undo BEFORE DOM swap
+        const aId = a.dataset.pieceId;
+        const bId = b.dataset.pieceId;
+
+        const aNext = a.nextSibling === b ? b.nextSibling : a.nextSibling;
+        const parent = a.parentNode;
+        parent.insertBefore(b, a);
+        if (aNext) parent.insertBefore(a, aNext);
+        else parent.appendChild(a);
+
+        requestAnimationFrame(() => {
+          const dur = 'transform 350ms cubic-bezier(.22,.9,.31,1)';
+          a.style.transition = dur;
+          b.style.transition = dur;
+          a.style.transform = '';
+          b.style.transform = '';
+        });
+
+        const cleanup = (el) => {
+          const onEnd = function te() {
+            el.style.transition = '';
+            el.style.transform = '';
+            el.removeEventListener('transitionend', onEnd);
+            checkLockFor(el);
+          };
+          el.addEventListener('transitionend', onEnd);
+        };
+        cleanup(a);
+        cleanup(b);
+
+        // update moves + undo stack
+        if (recordMove) {
+          moves++;
+          updateMoves();
+        } else {
+          // undo action: decrement moves but don't go below 0
+          moves = Math.max(0, moves - 1);
+          updateMoves();
+        }
+
+        if (pushUndo && recordMove) {
+          undoStack.push({aId, bId});
+          if (undoStack.length > 200) undoStack.shift();
+        }
+        updateUndoButton();
+      }
+
+      function swapByPieceIds(idA, idB, opts = {}) {
+        const a = board.querySelector('[data-piece-id="' + idA + '"]');
+        const b = board.querySelector('[data-piece-id="' + idB + '"]');
+        if (a && b) swapElementsWithAnimationByElements(a, b, opts);
+      }
+
+      function onPieceClick(e) {
+        const target = e.currentTarget;
+        if (target.classList.contains('locked')) return;
+        if (!selected) {
+          selected = target;
+          selected.classList.add('selected');
+          selected.focus();
+        } else {
+          if (selected === target) {
+            selected.classList.remove('selected');
+            selected = null;
+            return;
+          }
+          swapElementsWithAnimationByElements(selected, target, {recordMove: true, pushUndo: true});
+          if (selected) selected.classList.remove('selected');
+          selected = null;
+          checkWin();
+        }
+      }
+
+      // keyboard: arrows move focus; if selected, arrows swap selected with neighbor
+      function onPieceKeyDown(e) {
+        const el = e.currentTarget;
+        const index = Array.from(board.children).indexOf(el);
+        if (index < 0) return;
+        let handled = false;
+        const row = Math.floor(index / COLS);
+        const col = index % COLS;
+
+        if (e.key === 'ArrowLeft') {
+          if (col > 0) {
+            const target = board.children[index - 1];
+            if (selected) { swapElementsWithAnimationByElements(selected, target, {recordMove: true, pushUndo: true}); selected.classList.remove('selected'); selected = null; checkWin(); }
+            else target.focus();
+          }
+          handled = true;
+        } else if (e.key === 'ArrowRight') {
+          if (col < COLS - 1) {
+            const target = board.children[index + 1];
+            if (selected) { swapElementsWithAnimationByElements(selected, target, {recordMove: true, pushUndo: true}); selected.classList.remove('selected'); selected = null; checkWin(); }
+            else target.focus();
+          }
+          handled = true;
+        } else if (e.key === 'ArrowUp') {
+          if (row > 0) {
+            const target = board.children[index - COLS];
+            if (selected) { swapElementsWithAnimationByElements(selected, target, {recordMove: true, pushUndo: true}); selected.classList.remove('selected'); selected = null; checkWin(); }
+            else target.focus();
+          }
+          handled = true;
+        } else if (e.key === 'ArrowDown') {
+          if (row < ROWS - 1) {
+            const target = board.children[index + COLS];
+            if (selected) { swapElementsWithAnimationByElements(selected, target, {recordMove: true, pushUndo: true}); selected.classList.remove('selected'); selected = null; checkWin(); }
+            else target.focus();
+          }
+          handled = true;
+        } else if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          onPieceClick({ currentTarget: el });
+          handled = true;
+        } else if (e.key === 'Escape') {
+          if (selected) { selected.classList.remove('selected'); selected = null; }
+        }
+        if (handled) e.preventDefault();
+      }
+
+      // pointer / drag handling with snap
+      function onPiecePointerDown(e) {
+        if (e.button && e.button !== 0) return;
+        const target = e.currentTarget;
+        if (target.classList.contains('locked')) return;
+
+        pointerIdForDrag = e.pointerId;
+        target.setPointerCapture(pointerIdForDrag);
+        e.preventDefault();
+
+        draggingEl = target.cloneNode(true);
+        draggingEl.classList.add('dragging');
+        const computed = getComputedStyle(target);
+        draggingEl.style.width = computed.width;
+        draggingEl.style.height = computed.height;
+        draggingEl.style.backgroundPosition = target.style.backgroundPosition;
+        draggingEl.style.backgroundSize = computed.backgroundSize;
+        document.body.appendChild(draggingEl);
+        moveDragElement(e.clientX, e.clientY);
+
+        const onPointerMove = (ev) => {
+          if (ev.pointerId !== pointerIdForDrag) return;
+          moveDragElement(ev.clientX, ev.clientY);
+          clearHighlights();
+          const under = document.elementFromPoint(ev.clientX, ev.clientY);
+          const pieceUnder = findAncestorPiece(under);
+          if (pieceUnder && !pieceUnder.classList.contains('locked') && pieceUnder !== target) {
+            const center = pieceUnder.getBoundingClientRect();
+            const cx = center.left + center.width / 2;
+            const cy = center.top + center.height / 2;
+            const dist = Math.hypot(ev.clientX - cx, ev.clientY - cy);
+            const snapThreshold = Math.min(60, Math.max(30, Math.min(center.width, center.height) * 0.6));
+            if (dist <= snapThreshold) {
+              pieceUnder.classList.add('highlight-target');
+              snapTarget = pieceUnder;
+            } else {
+              pieceUnder.classList.add('highlight-target');
+              snapTarget = null;
+            }
+          } else {
+            snapTarget = null;
+          }
+        };
+
+        const onPointerUp = (ev) => {
+          if (ev.pointerId !== pointerIdForDrag) return;
+          target.releasePointerCapture(pointerIdForDrag);
+          pointerIdForDrag = null;
+
+          const under = document.elementFromPoint(ev.clientX, ev.clientY);
+          const pieceUnder = findAncestorPiece(under);
+          clearHighlights();
+
+          // if snapTarget was flagged (close enough) use it, else if pieceUnder exists and different, swap
+          const doSwapWith = snapTarget || (pieceUnder && pieceUnder !== target ? pieceUnder : null);
+          if (doSwapWith) {
+            // find original elements in the board (not clones)
+            const origTarget = findOriginalElementMatching(target);
+            const origUnder = findOriginalElementMatching(doSwapWith);
+            if (origTarget && origUnder) {
+              swapElementsWithAnimationByElements(origTarget, origUnder, {recordMove: true, pushUndo: true});
+            }
+          }
+
+          if (draggingEl && draggingEl.parentNode) draggingEl.parentNode.removeChild(draggingEl);
+          draggingEl = null;
+          snapTarget = null;
+
+          window.removeEventListener('pointermove', onPointerMove);
+          window.removeEventListener('pointerup', onPointerUp);
+
+          checkWin();
+        };
+
+        window.addEventListener('pointermove', onPointerMove);
+        window.addEventListener('pointerup', onPointerUp);
+      }
+
+      function moveDragElement(x, y) { if (!draggingEl) return; draggingEl.style.left = x + 'px'; draggingEl.style.top = y + 'px'; }
+
+      function findAncestorPiece(node) {
+        let el = node;
+        while (el && el !== board) {
+          if (el.classList && el.classList.contains && el.classList.contains('piece')) return el;
+          el = el.parentNode;
+        }
+        return null;
+      }
+
+      function findOriginalElementMatching(cloneLike) {
+        const bp = cloneLike.style.backgroundPosition;
+        const idx = cloneLike.dataset.correctIndex;
+        return Array.from(board.children).find(p => p.style.backgroundPosition === bp && p.dataset.correctIndex === idx) || null;
+      }
+
+      function clearHighlights() { board.querySelectorAll('.highlight-target').forEach(el => el.classList.remove('highlight-target')); }
+
+      function checkLockFor(el) {
+        const children = Array.from(board.children);
+        children.forEach((child, pos) => {
+          const correct = parseInt(child.dataset.correctIndex, 10);
+          if (pos === correct && !child.classList.contains('locked')) {
+            child.classList.add('locked');
+            child.removeEventListener('click', onPieceClick);
+            child.removeEventListener('pointerdown', onPiecePointerDown);
+            child.removeAttribute('tabindex');
+          } else if (pos !== correct && child.classList.contains('locked')) {
+            child.classList.remove('locked');
+            child.addEventListener('click', onPieceClick);
+            child.addEventListener('pointerdown', onPiecePointerDown);
+            child.setAttribute('tabindex', '0');
+          }
+        });
+      }
+
+      function checkWin() {
+        const children = Array.from(board.children);
+        const allLocked = children.every((child, pos) => parseInt(child.dataset.correctIndex, 10) === pos);
+        if (allLocked) {
+          stopTimer();
+          winMsg.style.display = 'block';
+          timerDisplay.style.color = '#2ecc71';
+          saveBestIfBetter(seconds);
+          showConfetti();
+        }
+      }
+
+      // confetti implementation (simple)
+      function showConfetti() {
+        const colors = ['#ff6384','#36a2eb','#ffcd56','#4bc0c0','#9966ff','#2ecc71','#f39c12'];
+        const count = 90;
+        for (let i = 0; i < count; i++) {
+          const el = document.createElement('div');
+          el.className = 'confetti-piece';
+          el.style.background = colors[Math.floor(Math.random()*colors.length)];
+          el.style.left = Math.random() * 100 + 'vw';
+          el.style.top = (-Math.random() * 10 - 5) + 'vh';
+          el.style.opacity = 0.95;
+          el.style.transform = rotate(${Math.random()*360}deg);
+          el.style.animationDelay = (Math.random()*300) + 'ms';
+          el.style.width = (6 + Math.random()*12) + 'px';
+          el.style.height = (8 + Math.random()*18) + 'px';
+          document.body.appendChild(el);
+          setTimeout(() => { if (el.parentNode) el.parentNode.removeChild(el); }, 2200 + Math.random()*600);
+        }
+      }
+
+      // Undo support
+      function updateUndoButton() { undoBtn.disabled = undoStack.length === 0; }
+      undoBtn.addEventListener('click', () => {
+        const last = undoStack.pop();
+        if (!last) return;
+        // swap back the pair of pieceIds, mark as undo (no extra move recorded)
+        swapByPieceIds(last.aId, last.bId, {recordMove: false, pushUndo: false});
+        updateUndoButton();
+      });
+
+      function swapByPieceIds(idA, idB, opts = {}) {
+        const a = board.querySelector('[data-piece-id="' + idA + '"]');
+        const b = board.querySelector('[data-piece-id="' + idB + '"]');
+        if (a && b) {
+          swapElementsWithAnimationByElements(a, b, opts);
+        }
+      }
+
+      restartBtn.addEventListener('click', () => {
+        stopTimer();
+        initGame();
+      });
+      shuffleBtn.addEventListener('click', () => {
+        const arr = Array.from(board.children);
+        shuffleArray(arr);
+        renderBoard(arr);
+        moves = 0;
+        updateMoves();
+        winMsg.style.display = 'none';
+        timerDisplay.style.color = 'var(--primary)';
+        startTimer();
+        checkLockFor();
+        undoStack.length = 0;
+        updateUndoButton();
+      });
+
+      function initGame() {
+        createPieces();
+        const arr = pieces.slice();
+        shuffleArray(arr);
+        renderBoard(arr);
+        moves = 0; updateMoves();
+        winMsg.style.display = 'none';
+        timerDisplay.style.color = 'var(--primary)';
+        startTimer();
+        loadBest();
+        checkLockFor();
+        undoStack.length = 0;
+        updateUndoButton();
+      }
+
+      // start
+      initGame();
+    })();
+  </script>
+</body>
+</html>
+
