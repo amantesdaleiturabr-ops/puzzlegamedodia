@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Desafio BillyBabe Puzzle — Undo, Snap, Confetti, Keyboard</title>
+  <title>Desafio BillyBabe Puzzle — Final</title>
   <style>
     :root {
       --primary: #bb965d;
@@ -59,8 +59,8 @@
     .piece {
       width: var(--piece-w);
       height: var(--piece-h);
-      /* IMAGEM ATUALIZADA ABAIXO */
-      background-image: url('WhatsApp Image 2026-01-07 at 11.04.11.jpeg');
+      /* LINHA CORRIGIDA ABAIXO PARA USAR O NOME SIMPLIFICADO */
+      background-image: url('jogo.jpg');
       background-size: calc(var(--cols) * var(--piece-w)) calc(var(--rows) * var(--piece-h));
       cursor: grab;
       border: 1px solid rgba(255,255,255,0.05);
@@ -74,7 +74,6 @@
 
     .piece:active { cursor: grabbing; }
     .piece:focus { outline: none; box-shadow: 0 0 8px rgba(187,150,93,0.8); }
-
     .selected { outline: 3px solid var(--primary); transform: scale(1.04); z-index: 20; box-shadow: 0 0 15px var(--primary); }
 
     .locked {
@@ -104,9 +103,6 @@
 
     #win-msg { display: none; margin-top: 10px; color: #2ecc71; font-weight: bold; }
 
-    .highlight-target { outline: 3px dashed rgba(187,150,93,0.7); }
-
-    /* confetti */
     .confetti-piece {
       position: fixed;
       width: 10px;
@@ -119,232 +115,19 @@
     }
     @keyframes confetti-fall {
       0% { transform: translateY(-10vh) rotate(0deg); opacity:1; }
-      80% { opacity:1; }
       100% { transform: translateY(110vh) rotate(720deg); opacity:0; }
     }
-
   </style>
 </head>
 <body>
-  <div class="header" role="banner">
+  <div class="header">
     <h1>🧩 BillyBabe Puzzle</h1>
-    <div class="status" aria-live="polite">
+    <div class="status">
       <div id="timer">00:00</div>
       <div id="moves">Movimentos: 0</div>
       <div id="best">Melhor: —</div>
     </div>
   </div>
 
-  <div id="puzzle-board" aria-label="Tabuleiro do quebra-cabeça" role="grid"></div>
-
-  <div id="win-msg" role="status">✨ PARABÉNS! Você montou o BillyBabe! ✨</div>
-
-  <div class="controls">
-    <button id="restart-btn">🔄 Tentar Novamente</button>
-    <button id="shuffle-btn">🔀 Embaralhar</button>
-    <button id="undo-btn" disabled>↶ Desfazer</button>
-  </div>
-
-  <script>
-    (function () {
-      const COLS = 5;
-      const ROWS = 6;
-      const TOTAL = COLS * ROWS;
-      const board = document.getElementById('puzzle-board');
-      const timerDisplay = document.getElementById('timer');
-      const movesDisplay = document.getElementById('moves');
-      const bestDisplay = document.getElementById('best');
-      const winMsg = document.getElementById('win-msg');
-      const restartBtn = document.getElementById('restart-btn');
-      const shuffleBtn = document.getElementById('shuffle-btn');
-      const undoBtn = document.getElementById('undo-btn');
-
-      let pieces = [];
-      let selected = null;
-      let draggingEl = null;
-      let pointerIdForDrag = null;
-      let snapTarget = null;
-      let moves = 0;
-      let seconds = 0;
-      let timerInterval = null;
-      const LOCAL_KEY = 'billybabe_best_seconds_v1';
-      const undoStack = [];
-
-      function formatTime(sec) {
-        const m = Math.floor(sec / 60).toString().padStart(2, '0');
-        const s = (sec % 60).toString().padStart(2, '0');
-        return ${m}:${s};
-      }
-
-      function loadBest() {
-        const v = localStorage.getItem(LOCAL_KEY);
-        if (v !== null) bestDisplay.innerText = 'Melhor: ' + formatTime(parseInt(v, 10));
-        else bestDisplay.innerText = 'Melhor: —';
-      }
-
-      function saveBestIfBetter(sec) {
-        const cur = localStorage.getItem(LOCAL_KEY);
-        if (cur === null || sec < parseInt(cur, 10)) {
-          localStorage.setItem(LOCAL_KEY, String(sec));
-          loadBest();
-        }
-      }
-
-      function startTimer() {
-        stopTimer();
-        seconds = 0;
-        timerDisplay.innerText = formatTime(seconds);
-        timerInterval = setInterval(() => { seconds++; timerDisplay.innerText = formatTime(seconds); }, 1000);
-      }
-
-      function stopTimer() { if (timerInterval) { clearInterval(timerInterval); timerInterval = null; } }
-
-      function createPieces() {
-        pieces = [];
-        const pxW = parseInt(getComputedStyle(document.documentElement).getPropertyValue('--piece-w')) || 60;
-        const pxH = parseInt(getComputedStyle(document.documentElement).getPropertyValue('--piece-h')) || 80;
-        for (let i = 0; i < TOTAL; i++) {
-          const p = document.createElement('div');
-          p.className = 'piece';
-          p.setAttribute('tabindex', '0');
-          const x = (i % COLS);
-          const y = Math.floor(i / COLS);
-          p.style.backgroundPosition = -${x * pxW}px -${y * pxH}px;
-          p.dataset.correctIndex = String(i);
-          p.dataset.pieceId = 'p' + i + '-' + Math.random().toString(36).slice(2,7);
-          p.addEventListener('click', onPieceClick);
-          p.addEventListener('keydown', onPieceKeyDown);
-          p.addEventListener('pointerdown', onPiecePointerDown);
-          pieces.push(p);
-        }
-      }
-
-      function shuffleArray(arr) {
-        for (let i = arr.length - 1; i > 0; i--) {
-          const j = Math.floor(Math.random() * (i + 1));
-          [arr[i], arr[j]] = [arr[j], arr[i]];
-        }
-      }
-
-      function renderBoard(arr) {
-        board.innerHTML = '';
-        arr.forEach(el => board.appendChild(el));
-      }
-
-      function updateMoves() { movesDisplay.innerText = 'Movimentos: ' + moves; }
-
-      function swapElementsWithAnimationByElements(a, b, {recordMove = true, pushUndo = true} = {}) {
-        if (!a || !b || a === b) return;
-        const rectA = a.getBoundingClientRect();
-        const rectB = b.getBoundingClientRect();
-        const dxA = rectA.left - rectB.left;
-        const dyA = rectA.top - rectB.top;
-        const dxB = -dxA;
-        const dyB = -dyA;
-
-        const aId = a.dataset.pieceId;
-        const bId = b.dataset.pieceId;
-
-        const aNext = a.nextSibling === b ? b.nextSibling : a.nextSibling;
-        const parent = a.parentNode;
-        parent.insertBefore(b, a);
-        if (aNext) parent.insertBefore(a, aNext);
-        else parent.appendChild(a);
-
-        if (recordMove) { moves++; updateMoves(); }
-        if (pushUndo && recordMove) {
-          undoStack.push({aId, bId});
-          updateUndoButton();
-        }
-        checkLockAll();
-      }
-
-      function onPieceClick(e) {
-        const target = e.currentTarget;
-        if (target.classList.contains('locked')) return;
-        if (!selected) {
-          selected = target;
-          selected.classList.add('selected');
-        } else {
-          if (selected !== target) {
-            swapElementsWithAnimationByElements(selected, target);
-            checkWin();
-          }
-          selected.classList.remove('selected');
-          selected = null;
-        }
-      }
-
-      function onPieceKeyDown(e) {
-        if (e.key === 'Enter' || e.key === ' ') onPieceClick(e);
-      }
-
-      function onPiecePointerDown(e) {
-        if (e.button !== 0) return;
-        const target = e.currentTarget;
-        if (target.classList.contains('locked')) return;
-        onPieceClick(e);
-      }
-
-      function checkLockAll() {
-        Array.from(board.children).forEach((child, pos) => {
-          if (parseInt(child.dataset.correctIndex) === pos) child.classList.add('locked');
-          else child.classList.remove('locked');
-        });
-      }
-
-      function checkWin() {
-        const win = Array.from(board.children).every((c, i) => parseInt(c.dataset.correctIndex) === i);
-        if (win) {
-          stopTimer();
-          winMsg.style.display = 'block';
-          saveBestIfBetter(seconds);
-          showConfetti();
-        }
-      }
-
-      function showConfetti() {
-        for (let i = 0; i < 50; i++) {
-          const c = document.createElement('div');
-          c.className = 'confetti-piece';
-          c.style.left = Math.random() * 100 + 'vw';
-          c.style.background = hsl(${Math.random()*360}, 70%, 50%);
-          document.body.appendChild(c);
-          setTimeout(() => c.remove(), 2000);
-        }
-      }
-
-      function updateUndoButton() { undoBtn.disabled = undoStack.length === 0; }
-
-      undoBtn.addEventListener('click', () => {
-        const last = undoStack.pop();
-        if (last) {
-          const a = board.querySelector([data-piece-id="${last.aId}"]);
-          const b = board.querySelector([data-piece-id="${last.bId}"]);
-          swapElementsWithAnimationByElements(a, b, {recordMove: false, pushUndo: false});
-          moves = Math.max(0, moves - 2); 
-          updateMoves();
-          updateUndoButton();
-        }
-      });
-
-      restartBtn.onclick = () => location.reload();
-      shuffleBtn.onclick = () => {
-        shuffleArray(pieces);
-        renderBoard(pieces);
-        moves = 0; updateMoves();
-        startTimer();
-        winMsg.style.display = 'none';
-        checkLockAll();
-      };
-
-      loadBest();
-      createPieces();
-      shuffleArray(pieces);
-      renderBoard(pieces);
-      startTimer();
-      checkLockAll();
-    })();
-  </script>
-</body>
-</html>
+  <div id="puzzle-board"></div>
+  <div id
